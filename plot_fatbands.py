@@ -1,0 +1,382 @@
+from __future__ import annotations
+import importlib.util
+import sys
+
+# Define your required packages
+required = {'pymatgen', 'monty', 'tabulate','numpy', 'matplotlib', 'pandas','param','xarray'}
+
+missing = []
+
+for pkg in required:
+    # This checks if the package exists without importing it
+    package_spec = importlib.util.find_spec(pkg)
+    if package_spec is None:
+        missing.append(pkg)
+
+if missing:
+    print(f"Error: Missing required libraries: {', '.join(missing)}")
+    print("Please install them using: pip install " + " ".join(missing))
+    sys.exit(1) # Stop the script safely
+else:
+    print("All dependencies found.")
+
+
+import xarray as xr
+import pandas as pd
+import matplotlib.pyplot as plt
+import traceback
+import numpy as np
+from collections import OrderedDict, defaultdict
+#from typing import List
+from tabulate import tabulate
+from monty.termcolor import cprint
+from monty.functools import lazy_property
+from monty.string import marquee
+from pymatgen.core.periodic_table import Element
+import param
+
+
+
+
+
+class NcFileViewer:
+    """
+    This class implements toool to inspect dimensions and variables stored in a netcdf file.
+
+    Relyes on the API provided by `AbinitNcFile` defined in core.mixins.py
+    """
+
+    
+    def __init__(self, nc_file, **params):
+        self.ncfile = xr.open_dataset(nc_file)
+        self.atom_spc = self.ncfile['atom_species']
+        self.atom_number = self.ncfile['atomic_numbers']        
+        self.kpoints = self.ncfile['number_of_kpoints']
+        self.lmax = self.ncfile['lmax_type']
+        self.iatsph = self.ncfile["iatsph"] - 1 ### first index = 0
+        self.prtdos = self.ncfile["prtdos"]
+        self.dos_fractions = None
+
+        self.no_bands = self.ncfile.dims['max_number_of_states']
+        self.nkpoints = self.ncfile.dims['number_of_kpoints']
+        self.eigenv = self.ncfile['eigenvalues']
+        self.natsph = self.ncfile.dims['natsph']
+        self.natom = self.ncfile.dims['number_of_atoms']
+        self.mbesslang = self.ncfile.dims["ndosfraction"]//self.natsph
+        self.nsppol = self.ncfile.dims['number_of_spins']
+
+        ## atom species and their index
+        self.species_map = {i+1: Element.from_Z(n).symbol for i, n in enumerate(self.atom_number)} 
+        ## atom species and their max angular momentum
+        self.lmax_map = {self.species_map[i+1]: l for i, l in enumerate(self.lmax.values)}
+        ## lmax of the full system
+        self.lsize = max(self.lmax_map.values()) + 1 #### lmax of the system + 1
+        ## atom type for each atom in the system
+        self.elements_system = {idx: self.species_map[val] for idx, val in enumerate(self.atom_spc.values)}
+        ## lmax for each atom in the system
+        self.lmax_atoms = {idx: self.lmax_map[val] for idx, val in enumerate(self.elements_system.values())}
+
+
+        
+        
+        ## separate atom index per chemical symbol, .e.g, ['Pb': [1,2,3], 'C':[2,3,...], ...]
+        self.symbol2indices={}
+        for index, symbol  in self.elements_system.items():
+            if symbol not in self.symbol2indices:
+                self.symbol2indices[symbol]=[]
+            self.symbol2indices[symbol].append(index)
+        for symbol in self.symbol2indices:
+            self.symbol2indices[symbol]=np.array(self.symbol2indices[symbol])
+### OLD VERSION
+#        self.symbol2indices={}   
+#        for symbol in self.species_map.values():
+#         self.symbol2indices[symbol]=np.array([index for index in self.elements_system if self.elements_system[index] == symbol])
+
+
+
+    def export_variables(self):
+            """
+            Creates a pandas DataFrame containing variable names, 
+            their dimensions, and their shapes.
+            """
+            data = []
+            filename='./variables.csv'
+            for var_name in self.ncfile.data_vars:
+                var = self.ncfile[var_name]
+                data.append({
+                    "Variable Name": var_name,
+                    "Dimensions": ", ".join(var.dims),
+                    "Shape": var.shape,
+                })
+            df_vars = pd.DataFrame(data)
+            df_vars.to_csv(filename, index=False)
+            print(f"Variable metadata exported to: {filename}")
+            return pd.DataFrame(data)
+
+    def export_dimensions(self):
+            """
+            Creates a CSV summarizing global dimensions and their sizes.
+            """
+            filename_dimensions = './dimensions.csv'
+            
+            # Accessing dimensions from the dataset object
+            dim_list = [
+                {"Dimension Name": name, "Size": size} 
+                for name, size in self.ncfile.dims.items()
+            ]
+            
+            #print(self.ncfile.dims.items())
+            #print(self.ncfile.dims)
+
+
+            df_dims = pd.DataFrame(dim_list)
+            df_dims.to_csv(filename_dimensions, index=False)
+            print(f"Dimensions summary exported to: {filename_dimensions}")
+            return df_dims
+#        
+#    @lazy_property
+#    def wal_sbk(self):
+#        """
+#        |numpy-array| of shape [natom, mbesslang, nsppol, mband, nkpt]
+#        with the L-contributions. Present only if prtdos == 3.
+#        """
+#        return self._wal_sbk()
+#
+    @lazy_property
+    def wal_sbk(self):
+        # Read dos_fraction_m from file and build wal_sbk array of shape
+        # [natom, lmax, nsppol, mband, nkpt].
+        #
+        # In abinit the **Fortran** array has shape --> self.ncfile['dos_fractions']
+        #   dos_fractions(nkpt,mband,nsppol,ndosfraction)
+        #
+        # Note that Abinit allows the users to select a subset of atoms with iatsph. Moreover the order
+        # of the atoms could differ from the one in the structure even when natom == natsph (unlikely but possible).
+        # To keep it simple, the code always operate on an array dimensioned with the total number of atoms
+        # Entries that are not computed are set to zero and a warning is issued.
+        for i, iatom in enumerate(self.iatsph.values):
+            print(i,'      ',iatom)       
+        if self.prtdos != 3:
+            raise RuntimeError(f"The file does not contain L-DOS since {self.prtdos=}")
+
+        wshape = (self.natom, self.mbesslang, self.nsppol, self.no_bands, self.nkpoints)
+
+        if self.natsph == self.natom and np.all(self.iatsph == np.arange(self.natom)):
+            # All atoms have been calculated and the order if ok.
+            wal_sbk = np.reshape(self.ncfile['dos_fractions'].values, wshape)
+            #print(wal_sbk.shape)
+
+        else:
+            # Need to transfer data. Note np.zeros.
+            wal_sbk = np.zeros(wshape)
+            if self.natsph == self.natom and np.any(self.iatsph != np.arange(self.natom)):
+                print("Will rearrange filedata since iatsp != [1, 2, ...])")
+                filedata = np.reshape(self.ncfile['dos_fractions'].values, wshape)
+                for i, iatom in enumerate(self.iatsph):                    
+                    wal_sbk[iatom] = filedata[i]
+            else:
+                print("natsph < natom. Will set to zero the PJDOS contributions for the atoms that are not included.")
+                assert self.natsph < self.natom
+                filedata = np.reshape(self.ncfile['dos_fractions'].values,
+                                        (self.natsph, self.mbesslang, self.nsppol, self.no_bands, self.nkpoints))
+                for i, iatom in enumerate(self.iatsph):
+                    wal_sbk[iatom] = filedata[i]
+        
+        return wal_sbk    # Return it
+
+    def get_wl_symbol(self, symbol, spin=None, band=None) -> np.ndarray:
+        """
+        Return the l-dependent DOS weights for a given type specified in terms of the
+        chemical symbol ``symbol``. The weights are summed over m and over all atoms of the same type.
+        If ``spin`` and ``band`` are not specified, the method returns the weights
+        for all spins and bands else the contribution for (spin, band).
+        """
+        if spin is None and band is None:
+            wl = np.zeros((self.lsize, self.nsppol, self.no_bands, self.nkpoints))
+            for iat in self.symbol2indices[symbol]:
+                for l in range(self.lmax_atoms[iat]+1):
+                    wl[l] += self.wal_sbk[iat, l]
+        else:
+            assert spin is not None and band is not None
+            wl = np.zeros((self.lsize, self.nkpoints))
+            for iat in self.symbol2indices[symbol]:
+                for l in range(self.lmax_atoms[iat]+1):
+                    wl[l, :] += self.wal_sbk[iat, l, spin, band, :]
+
+        return wl
+
+    def get_w_symbol(self, symbol, spin=None, band=None):
+        """
+        Return the DOS weights for a given type specified in terms of the
+        chemical symbol ``symbol``. The weights are summed over m and lmax[symbol] and
+        over all atoms of the same type.
+        If ``spin`` and ``band`` are not specified, the method returns the weights
+        for all spins and bands else the contribution for (spin, band).
+        """
+        if spin is None and band is None:
+            wl = self.get_wl_symbol(symbol)
+            w = np.zeros((self.nsppol, self.no_bands, self.nkpoints))
+            for l in range(self.lmax_map[symbol]+1):
+                w += wl[l]
+
+        else:
+            assert spin is not None and band is not None
+            wl = self.get_wl_symbol(symbol, spin=spin, band=band)
+            w = np.zeros((self.nkpoints))
+            for l in range(self.lmax_map[symbol]+1):
+                w += wl[l]
+
+        return w
+
+    def get_spilling(self, spin=None, band=None):
+        """
+        Return the spilling parameter --> electronic part that is not captured by local basis set
+        If ``spin`` and ``band`` are not specified, the method returns the spilling for all states
+        as a [nsppol, mband, nkpt] numpy array else the spilling for (spin, band) with shape [nkpt].
+        """
+        if spin is None and band is None:
+            sp = np.zeros((self.nsppol, self.no_bands, self.nkpoints))
+            for iatom in range(self.natom):
+                #print(iatom)
+                for l in range(self.lmax_atoms[iatom]+1):
+                    sp += self.wal_sbk[iatom, l]
+        else:
+            assert spin is not None and band is not None
+            sp = np.zeros((self.nkpoints))
+            for iatom in range(self.natom):
+                for l in range(self.lmax_atoms[iatom]+1):
+                    sp += self.wal_sbk[iatom, l, spin, band, :]
+
+        return 1.0 - sp
+
+   
+    def plot_fatbands_lview(self, e0="fermie", fact=1.0, ax_mat=None, lmax=None,
+                            ylims=None, blist=None, fontsize=12, **kwargs):
+        """
+        Plot the electronic fatbands grouped by L with matplotlib.
+
+        Args:
+            e0: Option used to define the zero of energy in the band structure plot. Possible values:
+                - ``fermie``: shift all eigenvalues to have zero energy at the Fermi energy.
+                -  Number e.g ``e0 = 0.5``: shift all eigenvalues to have zero energy at 0.5 eV
+                -  None: Don't shift energies, equivalent to ``e0 = 0``
+            fact: float used to scale the stripe size.
+            ax_mat: Matrix of axes, if None a new figure is produced.
+            lmax: Maximum L included in plot. None means full set available on file.
+            ylims: Set the data limits for the y-axis. Accept tuple e.g. ``(left, right)``
+                   or scalar e.g. ``left``. If left (right) is None, default values are used
+            blist: List of band indices for the fatband plot. If None, all bands are included
+            fontsize: Legend fontsize.
+
+        Returns: |matplotlib-Figure|
+        """
+        mylsize = self.lsize if lmax is None else lmax + 1
+        # Build or get grid with (nsppol, mylsize) axis.
+        nrows, ncols = self.nsppol, mylsize
+        ax_mat, fig, plt = get_axarray_fig_plt(ax_mat, nrows=nrows, ncols=ncols,
+                                               sharex=True, sharey=True, squeeze=False)
+        ax_mat = np.reshape(ax_mat, (nrows, ncols))
+        ebands = self.ebands
+        e0 = ebands.get_e0(e0)
+        x = np.arange(self.nkpt)
+        mybands = range(ebands.mband) if blist is None else blist
+
+        marker_kwargs = {
+            'marker': 'o',  # Circles as markers
+            'markersize': 6,  # Size of the markers
+            'markerfacecolor': 'magenta',  # Face color of the markers
+            'markeredgecolor': 'black',  # Edge color of the markers
+            'markeredgewidth': 1,  # Width of the marker edges
+        }
+        for spin in range(self.nsppol):
+            for l in range(mylsize):
+                ax = ax_mat[spin, l]
+
+                ebands.plot_ax(ax, e0, spin=spin, **self.eb_plotax_kwargs(spin))
+#                ebands.plot_ax(ax, e0, spin=spin, **marker_kwargs)
+                title = "%s, %s" % (self.l2tex[l], self.spin2tex[spin]) if self.nsppol == 2 else "%s" % self.l2tex[l]
+                ax.set_title(title)  # Set the title for the current subplot
+#                ebands.decorate_ax(ax, title=title)
+
+                if l != 0:
+                    ax.set_ylabel("")
+                    # Only the first column show labels.
+                    # Trick: Don't change the labels but set their fontsize to 0 otherwise
+                    # also the other axes are affected (likely due to sharey=True).
+                    #ax.yaxis.set_tick_params(fontsize=0)
+                    for tick in ax.yaxis.get_major_ticks():
+                        tick.label1.set_fontsize(0)
+
+                for ib, band in enumerate(mybands):
+                    yup = ebands.eigens[spin, :, band] - e0
+                    ydown = yup
+                    for symbol in self.symbols:
+                        wlk = self.get_wl_symbol(symbol, spin=spin, band=band) * (fact / 2)
+                        w = wlk[l]
+                        y1, y2 = yup + w, ydown - w
+                        # Add width around each band. Only the [0,0] plot has the legend.
+                        ax.fill_between(x, yup, y1, alpha=self.alpha, facecolor=self.symbol2color[symbol])
+                        ax.fill_between(x, ydown, y2, alpha=self.alpha, facecolor=self.symbol2color[symbol],
+                                        label=symbol if (l, spin, ib) == (0, 0, 0) else None)
+                        yup, ydown = y1, y2
+
+                set_axlims(ax, ylims, "y")
+
+        ax_mat[0, 0].legend(loc="best", fontsize=fontsize, shadow=True)
+        return fig
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# --- Execution ---
+viewer = NcFileViewer("./orb_proj/Pb_SiCo_FATBANDS.nc")
+
+
+#self.iatsph = self.ncfile["iatsph"]
+
+# Export both files
+#print(viewer.species_map)
+#print(viewer.lmax_map)
+#print(viewer.elements_system)
+#print(viewer.lmax_atoms)
+#print(viewer.iatsph.values)
+print(viewer.symbol2indices)
+print(viewer.symbol2indices_2)
+#sp=viewer.get_spilling()
+#print(sp.shape)
+#print(sp[0,222,:])
+#print(viewer.lsize)
+#test=viewer.wal_sbk()
+#dimensions=viewer.export_dimensions()
+
+#print(viewer.ncfile['eigenvalues'])
+#print(viewer.ncfile.dims['max_number_of_states'])
+
+#if viewer.prtdos == 3:
+# print('it is taking the value', viewer.prtdos.values)
+#print(viewer.prtdos.values)
+
+#print(viewer.mbesslang)
+#eigenv=viewer.ncfile['eigenvalues']
+#elements, lmax= viewer.atomic_species()
+#print(elements)
+#print(lmax)
+#print(viewer.atomic_species())
+#print(viewer.ncfile['lmax_type'].values)
+#print(elements_system)
+
+
+
+#plt.plot(kpoints,eigenv[0,:,:])
+#plt.show()
