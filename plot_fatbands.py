@@ -48,10 +48,12 @@ class NcFileViewer:
 
     
     def __init__(self, nc_file, **params):
+        ######################## constants ######################
+        self.Ha_to_eV=27.2114 ###  1 hartree to eV = 27.2114 eV
+        ########################
         self.ncfile = xr.open_dataset(nc_file)
         self.atom_spc = self.ncfile['atom_species']
-        self.atom_number = self.ncfile['atomic_numbers']        
-        self.kpoints = self.ncfile['number_of_kpoints']
+        self.atom_number = self.ncfile['atomic_numbers']                
         self.lmax = self.ncfile['lmax_type']
         self.iatsph = self.ncfile["iatsph"] - 1 ### first index = 0
         self.prtdos = self.ncfile["prtdos"]
@@ -154,8 +156,8 @@ class NcFileViewer:
         # of the atoms could differ from the one in the structure even when natom == natsph (unlikely but possible).
         # To keep it simple, the code always operate on an array dimensioned with the total number of atoms
         # Entries that are not computed are set to zero and a warning is issued.
-        for i, iatom in enumerate(self.iatsph.values):
-            print(i,'      ',iatom)       
+        #for i, iatom in enumerate(self.iatsph.values):
+            #print(i,'      ',iatom)       
         if self.prtdos != 3:
             raise RuntimeError(f"The file does not contain L-DOS since {self.prtdos=}")
 
@@ -164,7 +166,7 @@ class NcFileViewer:
         if self.natsph == self.natom and np.all(self.iatsph == np.arange(self.natom)):
             # All atoms have been calculated and the order if ok.
             wal_sbk = np.reshape(self.ncfile['dos_fractions'].values, wshape)
-            #print(wal_sbk.shape)
+            print(wal_sbk.shape)
 
         else:
             # Need to transfer data. Note np.zeros.
@@ -249,9 +251,19 @@ class NcFileViewer:
 
         return 1.0 - sp
 
+
+    @lazy_property
+    def bands_eV(self):               
+        bands = self.ncfile['eigenvalues'].transpose("number_of_spins", "max_number_of_states", "number_of_kpoints")
+        ##################### convert to eV and shift to E0
+        bands_in_eV = bands * self.Ha_to_eV
+        return  bands_in_eV
+
+
    
-    def plot_fatbands_lview(self, e0="fermie", fact=1.0, ax_mat=None, lmax=None,
-                            ylims=None, blist=None, fontsize=12, **kwargs):
+    def plot_fatbands_lview(self, e0=0, band_list=None, spin=None, l=None, fact=1.0, alpha=0.5):
+    #fact=1.0, ax_mat=None, lmax=None,
+    #                        ylims=None, blist=None, fontsize=12, **kwargs):
         """
         Plot the electronic fatbands grouped by L with matplotlib.
 
@@ -270,60 +282,36 @@ class NcFileViewer:
 
         Returns: |matplotlib-Figure|
         """
-        mylsize = self.lsize if lmax is None else lmax + 1
-        # Build or get grid with (nsppol, mylsize) axis.
-        nrows, ncols = self.nsppol, mylsize
-        ax_mat, fig, plt = get_axarray_fig_plt(ax_mat, nrows=nrows, ncols=ncols,
-                                               sharex=True, sharey=True, squeeze=False)
-        ax_mat = np.reshape(ax_mat, (nrows, ncols))
-        ebands = self.ebands
-        e0 = ebands.get_e0(e0)
-        x = np.arange(self.nkpt)
-        mybands = range(ebands.mband) if blist is None else blist
 
-        marker_kwargs = {
-            'marker': 'o',  # Circles as markers
-            'markersize': 6,  # Size of the markers
-            'markerfacecolor': 'magenta',  # Face color of the markers
-            'markeredgecolor': 'black',  # Edge color of the markers
-            'markeredgewidth': 1,  # Width of the marker edges
-        }
-        for spin in range(self.nsppol):
-            for l in range(mylsize):
-                ax = ax_mat[spin, l]
+        ## Build or get grid with (nsppol, mylsize) axis.
+        #nrows, ncols = self.nsppol, mylsize
+        #ax_mat, fig, plt = get_axarray_fig_plt(ax_mat, nrows=nrows, ncols=ncols,
+        #                                       sharex=True, sharey=True, squeeze=False)
+        fig, ax= plt.subplots(figsize=(8, 6))
+        #ax_mat = np.reshape(ax_mat, (nrows, ncols))
 
-                ebands.plot_ax(ax, e0, spin=spin, **self.eb_plotax_kwargs(spin))
-#                ebands.plot_ax(ax, e0, spin=spin, **marker_kwargs)
-                title = "%s, %s" % (self.l2tex[l], self.spin2tex[spin]) if self.nsppol == 2 else "%s" % self.l2tex[l]
-                ax.set_title(title)  # Set the title for the current subplot
-#                ebands.decorate_ax(ax, title=title)
+        ebands = self.bands_eV - e0        
+        x = np.arange(self.nkpoints)
+        mybands = list(range(self.no_bands)) if band_list is None else band_list
+        colors=['blue','red','green','plum']
+        for i in mybands:
+            ax.plot(x, ebands[0,i,:], color='black')
 
-                if l != 0:
-                    ax.set_ylabel("")
-                    # Only the first column show labels.
-                    # Trick: Don't change the labels but set their fontsize to 0 otherwise
-                    # also the other axes are affected (likely due to sharey=True).
-                    #ax.yaxis.set_tick_params(fontsize=0)
-                    for tick in ax.yaxis.get_major_ticks():
-                        tick.label1.set_fontsize(0)
-
-                for ib, band in enumerate(mybands):
-                    yup = ebands.eigens[spin, :, band] - e0
-                    ydown = yup
-                    for symbol in self.symbols:
-                        wlk = self.get_wl_symbol(symbol, spin=spin, band=band) * (fact / 2)
-                        w = wlk[l]
-                        y1, y2 = yup + w, ydown - w
-                        # Add width around each band. Only the [0,0] plot has the legend.
-                        ax.fill_between(x, yup, y1, alpha=self.alpha, facecolor=self.symbol2color[symbol])
-                        ax.fill_between(x, ydown, y2, alpha=self.alpha, facecolor=self.symbol2color[symbol],
-                                        label=symbol if (l, spin, ib) == (0, 0, 0) else None)
-                        yup, ydown = y1, y2
-
-                set_axlims(ax, ylims, "y")
-
-        ax_mat[0, 0].legend(loc="best", fontsize=fontsize, shadow=True)
-        return fig
+        for spin in range(self.nsppol):            
+            for ib, band in enumerate(mybands):
+                yup = ebands[spin, band,:]
+                ydown = yup
+                for symbol in self.species_map:
+                    wlk = self.get_wl_symbol(self.species_map[symbol], spin=spin, band=band) * (fact / 2)
+                    w = wlk[l]
+                    #print(w.shape)
+                    y1, y2 = yup + w, ydown - w
+                    # Add width around each band. Only the [0,0] plot has the legend.
+                    ax.fill_between(x, yup, y1, alpha=0.5, facecolor=colors[symbol-1])
+                    ax.fill_between(x, ydown, y2, alpha=0.5, facecolor=colors[symbol-1],
+                                    label=self.species_map[symbol] if ib == 0 else None)
+        ax.legend()
+        return fig, ax
 
 
 
@@ -340,19 +328,24 @@ class NcFileViewer:
 
 
 # --- Execution ---
-viewer = NcFileViewer("./orb_proj/Pb_SiCo_FATBANDS.nc")
+viewer = NcFileViewer("./Pb_SiCo_FATBANDS.nc")
 
 
 #self.iatsph = self.ncfile["iatsph"]
 
 # Export both files
-#print(viewer.species_map)
+#print(viewer.species_map.values())
 #print(viewer.lmax_map)
 #print(viewer.elements_system)
 #print(viewer.lmax_atoms)
 #print(viewer.iatsph.values)
-print(viewer.symbol2indices)
-print(viewer.symbol2indices_2)
+#print(viewer.wal_sbk)
+viewer.plot_fatbands_lview(band_list=list(range(150,250)), l=1)
+plt.show()
+#for i in range(444):
+#    plt.plot(viewer.get_bands[0,i,:])
+#plt.show()
+#print(viewer.symbol2indices)
 #sp=viewer.get_spilling()
 #print(sp.shape)
 #print(sp[0,222,:])
