@@ -463,7 +463,7 @@ viewer = NcFileViewer("./Pb_SiCo_FATBANDS.nc")
 #plt.show()
 Pb=atom1=[0,1,2]
 Gr=atom1=[3,4,5,6,7,8,9,10]
-SiC=list(range(11,56))
+SiC=list(range(11,50))
 at_sets=[Pb,Gr,SiC]
 viewer.plot_fatbands_l_atomsets(band_list=list(range(150,250)), e0=2.77561,
                                 l=1, atom_set=at_sets, xticks=['G','K','M','K'], 
