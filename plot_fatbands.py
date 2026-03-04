@@ -132,15 +132,7 @@ class NcFileViewer:
             df_dims.to_csv(filename_dimensions, index=False)
             print(f"Dimensions summary exported to: {filename_dimensions}")
             return df_dims
-#        
-#    @lazy_property
-#    def wal_sbk(self):
-#        """
-#        |numpy-array| of shape [natom, mbesslang, nsppol, mband, nkpt]
-#        with the L-contributions. Present only if prtdos == 3.
-#        """
-#        return self._wal_sbk()
-#
+
     @lazy_property
     def wal_sbk(self):
         # Read dos_fraction_m from file and build wal_sbk array of shape
@@ -185,10 +177,10 @@ class NcFileViewer:
 
     def get_wl_symbol(self, symbol, spin=None, band=None) -> np.ndarray:
         """
-        Return the l-dependent DOS weights for a given type specified in terms of the
+        Return the l-dependent DOS weights for a given atomic type specified in terms of the
         chemical symbol ``symbol``. The weights are summed over m and over all atoms of the same type.
-        If ``spin`` and ``band`` are not specified, the method returns the weights
-        for all spins and bands else the contribution for (spin, band).
+        If ``spin`` and ``band`` are not specified, the weights
+        for all spins and bands else the contribution for (spin, band) are returned.
         """
         if spin is None and band is None:
             wl = np.zeros((self.lsize, self.nsppol, self.no_bands, self.nkpoints))
@@ -205,53 +197,27 @@ class NcFileViewer:
         return wl
 
 
-    def get_wl_symbol_sets(self, symbol, spin=None, band=None) -> np.ndarray:
+    def get_wl_symbol_sets(self, atom_set, spin=None, band=None) -> np.ndarray:
         """
-        Return the l-dependent DOS weights for a given type specified in terms of the
-        chemical symbol ``symbol``. The weights are summed over m and over all atoms of the same type.
-        If ``spin`` and ``band`` are not specified, the method returns the weights
-        for all spins and bands else the contribution for (spin, band).
+        Return l-dependent DOS weights for a given atomic subset.
+        The weights are summed over m and over all atoms of the same type.
+        If ``spin`` and ``band`` are not specified, the weights
+        for all spins and bands else the contribution for (spin, band) are returned.
         """
         if spin is None and band is None:
             wl = np.zeros((self.lsize, self.nsppol, self.no_bands, self.nkpoints))
-            for iat in self.symbol2indices[symbol]:
+            for iat in atom_set:
                 for l in range(self.lmax_atoms[iat]+1):
                     wl[l] += self.wal_sbk[iat, l]
         else:
             assert spin is not None and band is not None
             wl = np.zeros((self.lsize, self.nkpoints))
-            for iat in self.symbol2indices[symbol]:
+            for iat in atom_set:
                 for l in range(self.lmax_atoms[iat]+1):
                     wl[l, :] += self.wal_sbk[iat, l, spin, band, :]
 
         return wl
 
-
-
-
-
-    def get_w_symbol(self, symbol, spin=None, band=None):
-        """
-        Return the DOS weights for a given type specified in terms of the
-        chemical symbol ``symbol``. The weights are summed over m and lmax[symbol] and
-        over all atoms of the same type.
-        If ``spin`` and ``band`` are not specified, the method returns the weights
-        for all spins and bands else the contribution for (spin, band).
-        """
-        if spin is None and band is None:
-            wl = self.get_wl_symbol(symbol)
-            w = np.zeros((self.nsppol, self.no_bands, self.nkpoints))
-            for l in range(self.lmax_map[symbol]+1):
-                w += wl[l]
-
-        else:
-            assert spin is not None and band is not None
-            wl = self.get_wl_symbol(symbol, spin=spin, band=band)
-            w = np.zeros((self.nkpoints))
-            for l in range(self.lmax_map[symbol]+1):
-                w += wl[l]
-
-        return w
 
     def get_spilling(self, spin=None, band=None):
         """
@@ -301,34 +267,27 @@ class NcFileViewer:
 
    
     def plot_fatbands_l(self, e0=0, band_list=None, spin=None, l=None,
-                         fact=1.0, alpha=0.5,xticks=None,xval_ticks=None):
-    #fact=1.0, ax_mat=None, lmax=None,
-    #                        ylims=None, blist=None, fontsize=12, **kwargs):
+                         fact=1.0, alpha=0.5,xticks=None,xval_ticks=None, ylims=None, xlims=None, **kwargs):
+
         """
-        Plot the electronic fatbands grouped by L with matplotlib.
+        Plot the electronic fatbands for a specific L grouped by atom type
 
         Args:
-            e0: Option used to define the zero of energy in the band structure plot. Possible values:
-                - ``fermie``: shift all eigenvalues to have zero energy at the Fermi energy.
-                -  Number e.g ``e0 = 0.5``: shift all eigenvalues to have zero energy at 0.5 eV
-                -  None: Don't shift energies, equivalent to ``e0 = 0``
+            e0: Option used to define the zero of energy in the band structure plot.
             fact: float used to scale the stripe size.
-            ax_mat: Matrix of axes, if None a new figure is produced.
-            lmax: Maximum L included in plot. None means full set available on file.
-            ylims: Set the data limits for the y-axis. Accept tuple e.g. ``(left, right)``
-                   or scalar e.g. ``left``. If left (right) is None, default values are used
-            blist: List of band indices for the fatband plot. If None, all bands are included
-            fontsize: Legend fontsize.
-
+            l: Angular momentum used to calculate the orbital projection
+            ylims: List used to define limits for the y-axis
+            xlims: List used to define limits for the x-axis 
+            band_list: List of band indices for the fatband plot. If None, all bands are included.
+            save_path: for saving the figure in the specified path './path/name.png'.
+            dpi: resolution of the saved fig.
+            format: format of the fig, e.g, pdf, png, etc.
         Returns: |matplotlib-Figure|
         """
 
-        ## Build or get grid with (nsppol, mylsize) axis.
-        #nrows, ncols = self.nsppol, mylsize
-        #ax_mat, fig, plt = get_axarray_fig_plt(ax_mat, nrows=nrows, ncols=ncols,
-        #                                       sharex=True, sharey=True, squeeze=False)
+
         fig, ax= plt.subplots(figsize=(8, 6))
-        #ax_mat = np.reshape(ax_mat, (nrows, ncols))
+
 
         ebands = self.bands_eV - e0        
         x = np.arange(self.nkpoints)
@@ -360,15 +319,109 @@ class NcFileViewer:
         ax.set_title('l=' + self.l_to_symbol[l], pad=35)
         ax.set_xlabel('K-point')
         ax.set_ylabel('Energy (eV)')
-        if xticks is not None and xval_ticks is not None:
-            ax.set_xticks(xval_ticks, xticks)
-        elif xval_ticks is not None:
-            ax.set_xticks(xval_ticks)
+
+        if ylims is not None:
+            ax.set_ylim(ylims[0],ylims[1])
+
+        if xlims is not None:
+            ax.set_xlim(xlims[0],xlims[1])
+
+        if xval_ticks is not None:
+            # Si hay posiciones, las ponemos. Si además hay etiquetas, se pasan como 'labels'
+            ax.set_xticks(xval_ticks, labels=xticks)
+        elif xticks is not None:
+            # Si hay etiquetas pero no posiciones (xval_ticks es None)
+            raise ValueError("Values for the ticks not defined")
+
+        # 1. Handle Saving Logic
+        save_path = kwargs.pop('save_path')
+        if save_path:
+            # Set defaults for savefig, but allow kwargs to override them
+            dpi = kwargs.pop('dpi', 300)
+            # bbox_inches='tight' to keep the legend in the frame
+            fig.savefig(save_path, dpi=dpi, bbox_inches='tight', **kwargs)
+            print(f"Figure saved to: {save_path}")
+
+
         return fig, ax
 
+    def plot_fatbands_l_atomsets(self, e0=0, band_list=None, spin=None, l=None, atom_set=None,
+                         fact=1.0, alpha=0.5,xticks=None,xval_ticks=None, ylims=None, xlims=None, **kwargs):
+
+        """
+        Plot the electronic fatbands for a specific L for each subset of atoms defined
+
+        Args:
+            e0: Option used to define the zero of energy in the band structure plot.
+            fact: float used to scale the stripe size.
+            l: Angular momentum used to calculate the orbital projection.
+            atom_set: subsets of atoms for which the orbital projected will be calculated.
+            ylims: List used to define limits for the y-axis.
+            xlims: List used to define limits for the x-axis.
+            band_list: List of band indices for the fatband plot. If None, all bands are included.
+            save_path: for saving the figure in the specified path './path/name.png'.
+            dpi: resolution of the saved fig.
+            format: format of the fig, e.g, pdf, png, etc.
+        Returns: |matplotlib-Figure|
+        """
+
+        fig, ax= plt.subplots(figsize=(8, 6))
 
 
+        ebands = self.bands_eV - e0        
+        x = np.arange(self.nkpoints)
+        mybands = list(range(self.no_bands)) if band_list is None else band_list
+        colors = self.get_atom_colors(len(self.species_map))
+        for i in mybands:
+            ax.plot(x, ebands[0,i,:], color='black')
 
+        for spin in range(self.nsppol):            
+            for ib, band in enumerate(mybands):
+                yup = ebands[spin, band,:]
+                ydown = yup
+                for set_idx, at_set in enumerate(atom_set):
+                    wlk = self.get_wl_symbol_sets(atom_set=at_set, spin=spin, band=band) * (fact / 2)
+                    w = wlk[l]
+                    #print(w.shape)
+                    y1, y2 = yup + w, ydown - w
+                    # Add width around each band. Only the [0,0] plot has the legend.
+                    ax.fill_between(x, yup, y1, alpha=0.5, facecolor=colors[set_idx])
+                    ax.fill_between(x, ydown, y2, alpha=0.5, facecolor=colors[set_idx],
+                                    label=f"set {set_idx+1}"  if ib == 0 else None)
+        ax.legend(
+            loc='lower center', 
+            bbox_to_anchor=(0.5, 1.015), 
+            ncol=len(atom_set), 
+            shadow=False, 
+            frameon=True
+        )
+        ax.set_title('l=' + self.l_to_symbol[l], pad=35)
+        ax.set_xlabel('K-point')
+        ax.set_ylabel('Energy (eV)')
+
+        if ylims is not None:
+            ax.set_ylim(ylims[0],ylims[1])
+
+        if xlims is not None:
+            ax.set_xlim(xlims[0],xlims[1])
+
+        if xval_ticks is not None:
+            # Si hay posiciones, las ponemos. Si además hay etiquetas, se pasan como 'labels'
+            ax.set_xticks(xval_ticks, labels=xticks)
+        elif xticks is not None:
+            # Si hay etiquetas pero no posiciones (xval_ticks es None)
+            raise ValueError("Values for the ticks not defined")
+
+        # 1. Handle Saving Logic
+        save_path = kwargs.pop('save_path')
+        if save_path:
+            # Set defaults for savefig, but allow kwargs to override them
+            dpi = kwargs.pop('dpi', 300)
+            # bbox_inches='tight' to keep the legend in the frame
+            fig.savefig(save_path, dpi=dpi, bbox_inches='tight', **kwargs)
+            print(f"Figure saved to: {save_path}")
+
+        return fig, ax
 
 
 
@@ -393,13 +446,25 @@ viewer = NcFileViewer("./Pb_SiCo_FATBANDS.nc")
 #print(viewer.lmax_atoms)
 #print(viewer.iatsph.values)
 #print(viewer.wal_sbk)
-viewer.plot_fatbands_l(band_list=list(range(150,250)), l=1)#, xticks=['G','K','M','K'],xval_ticks=[0,30,60,90])
+#viewer.plot_fatbands_l(band_list=list(range(150,250)), l=1, xticks=['G','K','M','K'],xval_ticks=[0,30,60,90])
 #viewer.plot_fatbands_l(band_list=list(range(150,250)), l=0)
-plt.show()
+#plt.show()
+Pb=atom1=[0,1,2]
+Gr=atom1=[3,4,5,6,7,8,9,10]
+SiC=list(range(11,50))
+at_sets=[Pb,Gr,SiC]
+viewer.plot_fatbands_l_atomsets(band_list=list(range(150,250)), e0=2.77561,
+                                l=1, atom_set=at_sets, xticks=['G','K','M','K'], 
+                                xval_ticks=[0,30,60,90],
+                                save_path='./test_1.png')
+#plt.show()
+
 #for i in range(444):
 #    plt.plot(viewer.get_bands[0,i,:])
 #plt.show()
 #print(viewer.symbol2indices)
+#wl=viewer.get_wl_symbol_sets(atom_set=[0,1,2])
+#print(wl.shape)
 #sp=viewer.get_spilling()
 #print(sp.shape)
 #print(sp[0,222,:])
