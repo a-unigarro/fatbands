@@ -40,11 +40,10 @@ import seaborn as sns
 
 
 
-class NcFileViewer:
+class FatbandsPlotter:
     """
-    This class implements toool to inspect dimensions and variables stored in a netcdf file.
-
-    Relyes on the API provided by `AbinitNcFile` defined in core.mixins.py
+    This class implements tool to plot extract data from the FATBANDS.nc file from
+    ABINIT, and generate fatband plots.
     """
 
     
