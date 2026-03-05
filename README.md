@@ -1,7 +1,7 @@
 # Fatbands Analysis Tools
 
 Python tools for extracting and plotting fatband projections
-from ABINIT FATBANDS.nc files.
+obtained from ABINIT v.9.10.3. It uses as input the FATBANDS.nc files.
 
 This project is under active development.
 
