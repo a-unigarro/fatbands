@@ -353,92 +353,7 @@ class FatbandsPlotter:
 
 
 
-
-    def plot_fatbands_atomtype(self, e0=0, band_list=None, spin=None, l=None, colors=None, symbol=None,
-                         fact=1.0, alpha=0.5,xticks=None,xval_ticks=None, ylims=None, xlims=None, **kwargs):
-
-        """
-        Plot the electronic fatbands for a specific L and type.
-
-        Args:
-            e0: Option used to define the zero of energy in the band structure plot.
-            band_list: List of band indices for the fatband plot. If None, all bands are included.
-            l: Angular momentum used to calculate the orbital projection.
-            colors: list containing the colores used for each stripe.
-            fact: float used to scale the stripe size.
-            alpha: controls the transparency of the stripes
-            xticks: list with labels of the ticks.
-            xval_ticks: list containing the values where the ticks will be located.
-            ylims: list used to define limits for the y-axis.
-            xlims: list used to define limits for the x-axis.
-            save_path: for saving the figure in the specified path './path/name.png'.
-            dpi: resolution of the saved fig.
-            format: format of the fig, e.g, pdf, png, etc.
-        Returns: |matplotlib-Figure|
-        """
-
-
-        fig, ax= plt.subplots(figsize=(8, 6))
-
-        if symbol is None or symbol not in self.species_map.values():
-            raise ValueError("Incorrect or undefined atom type.")
-        
-        
-        ######## default color is red ###########
-        if colors is None:
-            colors = 'red'
-
-
-        ebands = self.bands_eV - e0        
-        x = np.arange(self.nkpoints)
-        mybands = list(range(self.no_bands)) if band_list is None else band_list
-        
-        for i in mybands:
-            ax.plot(x, ebands[0,i,:], color='black')
-
-        for spin in range(self.nsppol):            
-            for ib, band in enumerate(mybands):
-                yup = ebands[spin, band,:]
-                ydown = yup
-                wlk = self.get_wl_symbol(symbol, spin=spin, band=band) * (fact / 2)
-                w = wlk[l]
-                #print(w.shape)
-                y1, y2 = yup + w, ydown - w
-                # Add width around each band. Only the [0,0] plot has the legend.
-                ax.fill_between(x, yup, y1, alpha=0.5, facecolor=colors)
-                ax.fill_between(x, ydown, y2, alpha=0.5, facecolor=colors,
-                                label=symbol if ib == 0 else None)
-        ax.legend(
-            loc='lower center', 
-            bbox_to_anchor=(0.5, 1.015), 
-            ncol=len(self.species_map), 
-            shadow=False, 
-            frameon=True
-        )
-        ax.set_title('l=' + self.l_to_symbol[l], pad=35)
-        ax.set_xlabel('K-point')
-        ax.set_ylabel('Energy (eV)')
-
-        if ylims is not None:
-            ax.set_ylim(ylims[0],ylims[1])
-
-        if xlims is not None:
-            ax.set_xlim(xlims[0],xlims[1])
-
-        if xval_ticks is not None:
-            # Si hay posiciones, las ponemos. Si además hay etiquetas, se pasan como 'labels'
-            ax.set_xticks(xval_ticks, labels=xticks)
-        elif xticks is not None:
-            # Si hay etiquetas pero no posiciones (xval_ticks es None)
-            raise ValueError("Values for the ticks not defined")
-
-        self._save_and_handle_kwargs(fig, **kwargs)
-   
-
-
-
-
-    def plot_fatbands_l(self, e0=0, band_list=None, spin=None, l=None, colors=None,
+    def plot_fatbands_l(self, e0=0, band_list=None, spin=None, l=None, colors=None, symbol=None,
                          fact=1.0, alpha=0.5,xticks=None,xval_ticks=None, ylims=None, xlims=None, **kwargs):
 
         """
@@ -449,6 +364,7 @@ class FatbandsPlotter:
             band_list: List of band indices for the fatband plot. If None, all bands are included.
             l: Angular momentum used to calculate the orbital projection.
             colors: list containing the colores used for each stripe.
+            symbols: Atom type(s) included in the fatbands. Can be a string e.g 'Pb'. A list or an array of strings. 
             fact: float used to scale the stripe size.
             alpha: controls the transparency of the stripes
             xticks: list with labels of the ticks.
@@ -460,6 +376,28 @@ class FatbandsPlotter:
             format: format of the fig, e.g, pdf, png, etc.
         Returns: |matplotlib-Figure|
         """
+        # string elements in self.species_map.values()
+        valid_species = set(self.species_map.values())
+  
+        #  If nothing is specified, use all species in the system
+        if symbol is None:            
+            atm_symbols = valid_species 
+
+        elif isinstance(symbol, str):
+            # If it's a single string "Si", wrap it in a list ["Si"]
+            atm_symbols = [symbol]
+        elif isinstance(symbol, (list, np.ndarray)):
+            # If it's already a list or numpy array, use it directly
+            atm_symbols = list(symbol)
+        else:
+            # Handle Xarray or other iterables safely
+            atm_symbols = list(symbol)
+        #Check that every requested symbol actually exists in the file
+        
+        for s in atm_symbols:
+            if s not in valid_species:
+                raise ValueError(f"Incorrect element specified: '{s}'. "
+                                 f"Valid species in this file are: {valid_species}")
 
 
         fig, ax= plt.subplots(figsize=(8, 6))
@@ -480,14 +418,14 @@ class FatbandsPlotter:
             for ib, band in enumerate(mybands):
                 yup = ebands[spin, band,:]
                 ydown = yup
-                for idx, symbol in self.species_map.items():
+                for idx, symbol in enumerate(atm_symbols):
                     wlk = self.get_wl_symbol(symbol, spin=spin, band=band) * (fact / 2)
                     w = wlk[l]
                     #print(w.shape)
                     y1, y2 = yup + w, ydown - w
                     # Add width around each band. Only the [0,0] plot has the legend.
-                    ax.fill_between(x, yup, y1, alpha=0.5, facecolor=colors[idx-1])
-                    ax.fill_between(x, ydown, y2, alpha=0.5, facecolor=colors[idx-1],
+                    ax.fill_between(x, yup, y1, alpha=0.5, facecolor=colors[idx])
+                    ax.fill_between(x, ydown, y2, alpha=0.5, facecolor=colors[idx],
                                     label=symbol if ib == 0 else None)
         ax.legend(
             loc='lower center', 
@@ -721,8 +659,8 @@ Pb=atom1=[0,1,2]
 Gr=atom1=[3,4,5,6,7,8,9,10]
 SiC=list(range(11,50))
 at_sets=[Pb,Gr,SiC]
-viewer.plot_fatbands_l_atomsets(band_list=list(range(150,250)), e0=2.77561,
-                                l=1, atom_set=[0,1,2],ylims=[-2,2],
+viewer.plot_fatbands_l(band_list=list(range(150,250)), e0=2.77561,
+                                l=1,ylims=[-2,2],
                                 xval_ticks=[0,30,60,90],
                                 save_path='./test_2.png')
 #plt.show()
