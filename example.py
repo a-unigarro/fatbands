@@ -6,6 +6,7 @@ from fatbands import FatbandsPlotter
 # Initialize with the example file
 viewer = FatbandsPlotter("PATH_TO_FATBANDS.nc")
 
+
 # Call plot function for L (symbol) and LM (symbol_m) resolved fatbands for te atom type specified.
 viewer.plot_fatbands_symbol(band_list=list(range(150,250)), #### bands to plot
                                 e0=2.77561, ### Fermi level
@@ -30,4 +31,4 @@ viewer.plot_fatbands_atomsets(band_list=list(range(150,250)),  #### bands to plo
                                 atom_set_m=[[3,4,5,6,7,8,9,10],list(range(11,50))], ### atoms set used for the m-resolved orbital projection
                                 xticks=['G','K','M','K'], ###  ticks for the x-axis
                                 xval_ticks=[0,30,60,90], ### where the ticks are located
-                                save_path='./plot.png') 
+                                save_path='./plot_2.png') 

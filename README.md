@@ -1,13 +1,26 @@
 # Fatbands Analysis Tools
 
-Python tools for extracting and plotting fatband projections.
-Developed for ABINIT v.9.10.3. It uses as input the FATBANDS.nc files.
-For the L-resolved plots, a calculation with prtdos=3 is required.
-In the LM-resolved case,  prtdos=3 and prtdosm != 0.
+Python tools for extracting and plotting fatband projections from electronic structure calculations. 
 
-## Status
+Developed for **ABINIT v.9.10.3**, this tool parses NetCDF output to visualize the contribution of atomic orbitals to the electronic band structure.
 
-- Core data extraction implemented
-- Plotting API finalized for L and LM resolved fatbands
+## Features
+- **Core Data Extraction:** High-performance parsing of NetCDF files using `xarray`.
+- **L-resolved plots:** Visualize orbital angular momentum contributions ($s, p, d, f$). 
+- **LM-resolved plots:** Visualize magnetic quantum number projections (e.g., $d_{xy}, d_{z^2}$).
+- **Spin Polarization:** Automatic handling of spin-up and spin-down channels with distinct markers ("^" and "v").
+
+## ABINIT Requirements
+To generate the compatible input files (`FATBANDS.nc`), your ABINIT input file (`.abi`) must include the following flags:
+
+* **For L-resolved plots:** `prtdos = 3`
+* **For LM-resolved plots:** `prtdos = 3` and `prtdosm != 0`
+
+---
+
+## Install Dependencies 
+pip install -r requirements.txt
 
 
+## Usage
+Check example.py file

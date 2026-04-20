@@ -1,40 +1,22 @@
 from __future__ import annotations
-import importlib.util
+
 import sys
-
-# Define your required packages
-required = {'pymatgen', 'monty', 'tabulate','numpy', 'matplotlib', 'pandas','param','xarray', 'seaborn'}
-
-missing = []
-
-for pkg in required:
-    # This checks if the package exists without importing it
-    package_spec = importlib.util.find_spec(pkg)
-    if package_spec is None:
-        missing.append(pkg)
-
-if missing:
-    print(f"Error: Missing required libraries: {', '.join(missing)}")
-    print("Please install them using: pip install " + " ".join(missing))
-    sys.exit(1) # Stop the script safely
-else:
-    print("All dependencies found.")
-
-
-import xarray as xr
-import pandas as pd
-import matplotlib.pyplot as plt
 import traceback
-import numpy as np
 from collections import OrderedDict, defaultdict
-#from typing import List
-from tabulate import tabulate
+
+import numpy as np
+import pandas as pd
+import xarray as xr
+
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+from pymatgen.core.periodic_table import Element
 from monty.termcolor import cprint
 from monty.functools import lazy_property
 from monty.string import marquee
-from pymatgen.core.periodic_table import Element
+from tabulate import tabulate
 import param
-import seaborn as sns
 
 
 
